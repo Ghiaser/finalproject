@@ -18,10 +18,13 @@ def generate_fernet_key(password: str) -> bytes:
     return base64.urlsafe_b64encode(hashed)
 
 
-def encrypt_vector(vec: np.ndarray, fernet: Fernet) -> np.ndarray:
+def encrypt_vector(vec: np.ndarray, fernet: Fernet) -> bytes:
     flat_bytes = vec.tobytes()
-    encrypted = fernet.encrypt(flat_bytes)
-    return np.frombuffer(fernet.decrypt(encrypted), dtype=np.float32).reshape(vec.shape)
+    return fernet.encrypt(flat_bytes)
+
+def decrypt_vector(encrypted_bytes: bytes, fernet: Fernet, shape=(1, 512)) -> np.ndarray:
+    flat_bytes = fernet.decrypt(encrypted_bytes)
+    return np.frombuffer(flat_bytes, dtype=np.float32).reshape(shape)
 
 
 class CLIPSecureEncryptor:
@@ -54,28 +57,34 @@ class CLIPSecureEncryptor:
             vec = self.model.get_text_features(**inputs).cpu().numpy().astype("float32")
         return vec
 
-    def build_index_from_files(self, file_paths: List[str], password: str):
-        self.model.eval()
-        self.fernet = Fernet(generate_fernet_key(password))
-        encrypted_vectors = []
+    def build_index_from_files(self, folder_path: str, password: str):
+        self.encrypted_vectors = []
         self.data_refs = []
+        self.fernet = Fernet(generate_fernet_key(password))
 
-        for i, path in enumerate(file_paths):
-            print(f"🔄 Processing file {i+1}/{len(file_paths)}: {os.path.basename(path)}")
-            if path.lower().endswith(('.jpg', '.jpeg', '.png')):
-                vec = self.encode_image(path)
-            elif path.lower().endswith('.txt'):
-                vec = self.encode_text_file(path)
-            else:
+        for filename in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, filename)
+            if not os.path.isfile(file_path):
                 continue
-            enc_vec = encrypt_vector(vec, self.fernet)
-            encrypted_vectors.append(enc_vec)
-            self.data_refs.append(self.fernet.encrypt(path.encode()).decode())
 
-        if encrypted_vectors:
-            embedding_matrix = np.vstack(encrypted_vectors).astype("float32")
-            self.index = faiss.IndexFlatL2(embedding_matrix.shape[1])
-            self.index.add(embedding_matrix)
+            with open(file_path, "rb") as f:
+                content = f.read()
+            self.data_refs.append(self.fernet.encrypt(content).decode())
+
+            if filename.lower().endswith((".png", ".jpg", ".jpeg")):
+                image = Image.open(BytesIO(content)).convert("RGB")
+                processed = self.processor(images=image, return_tensors="pt").to(self.device)
+                with torch.no_grad():
+                    vec = self.model.get_image_features(**processed).cpu().numpy().astype("float32")
+            else:
+                processed = self.processor(text=filename, return_tensors="pt", padding=True, truncation=True).to(
+                    self.device)
+                with torch.no_grad():
+                    vec = self.model.get_text_features(**processed).cpu().numpy().astype("float32")
+
+            encrypted_vec = encrypt_vector(vec, self.fernet)
+            self.encrypted_vectors.append(encrypted_vec)
+
 
     def _decrypt_refs(self):
         try:
@@ -86,8 +95,6 @@ class CLIPSecureEncryptor:
         return [self.fernet.decrypt(p.encode()).decode() for p in self.data_refs]
 
     def query_text(self, query: str, password: str, k=3):
-        if self.index is None:
-            raise ValueError("Index is not loaded or built yet.")
         self.fernet = Fernet(generate_fernet_key(password))
         vec = self.processor(
             text=query,
@@ -98,10 +105,18 @@ class CLIPSecureEncryptor:
         ).to(self.device)
         with torch.no_grad():
             emb = self.model.get_text_features(**vec).cpu().numpy().astype("float32")
-        enc_vec = encrypt_vector(emb, self.fernet)
-        distances, indices = self.index.search(enc_vec, k)
-        refs = self._decrypt_refs()
-        return [refs[i] for i in indices[0]]
+
+        scores = []
+        for i, enc_vec in enumerate(self.encrypted_vectors):
+            try:
+                decrypted_vec = decrypt_vector(enc_vec, self.fernet, shape=emb.shape)
+                sim = np.dot(emb, decrypted_vec.T)[0][0]
+                scores.append((self.data_refs[i], sim))
+            except Exception as e:
+                print(f"❌ Failed to decrypt or compare vector {i}: {e}")
+
+        sorted_refs = sorted(scores, key=lambda x: -x[1])[:k]
+        return [self.fernet.decrypt(ref.encode()).decode() for ref, _ in sorted_refs]
 
     def query_image(self, image_path: str, password: str, k=3):
         if self.index is None:
@@ -116,12 +131,12 @@ class CLIPSecureEncryptor:
     def save_index(self, path="encrypted_index.pkl"):
         with open(path, "wb") as f:
             pickle.dump({
-                "index": self.index,
-                "data_refs": self.data_refs
+                "data_refs": self.data_refs,
+                "encrypted_vectors": self.encrypted_vectors
             }, f)
 
     def load_index(self, path="encrypted_index.pkl"):
         with open(path, "rb") as f:
             obj = pickle.load(f)
-            self.index = obj["index"]
             self.data_refs = obj["data_refs"]
+            self.encrypted_vectors = obj["encrypted_vectors"]

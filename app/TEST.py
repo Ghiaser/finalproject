@@ -1,4 +1,3 @@
-
 import os
 import streamlit as st
 from main_final import CLIPSecureEncryptor
@@ -7,12 +6,16 @@ from PIL import Image
 st.set_page_config(page_title="🔐 Secure Semantic Search", layout="centered")
 st.title("🔐 Secure Semantic File Search")
 
-password = st.text_input("Enter your secret password", type="password")
+# קלט של סיסמה
+password = st.text_input("🔑 Enter your secret password", type="password")
 
-folder = "/home/danielbes/Desktop/BETA/DATA"
-index_path = "my_index.pkl"
-files = [os.path.join(folder, f) for f in sorted(os.listdir(folder)) if f.lower().endswith(('.jpg', '.png', '.txt'))]
+# קלט של תיקייה
+folder = st.text_input("📁 Enter path to folder with files (txt / jpg / png)", value="C:\\shaked\\DATA")
 
+# נתיב לאינדקס
+index_path = os.path.join(folder, "secure_index.pkl")
+
+# יצירת encryptor רק פעם אחת
 if "index_ready" not in st.session_state:
     st.session_state.index_ready = False
 if "encryptor" not in st.session_state:
@@ -20,7 +23,10 @@ if "encryptor" not in st.session_state:
 
 encryptor = st.session_state.encryptor
 
-if password:
+if password and folder:
+    files = [os.path.join(folder, f) for f in sorted(os.listdir(folder)) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.txt'))]
+
+    # טען אינדקס אם קיים
     if not st.session_state.index_ready and os.path.exists(index_path):
         try:
             encryptor.load_index(index_path)
@@ -29,13 +35,18 @@ if password:
         except Exception as e:
             st.error(f"❌ Failed to auto-load index: {e}")
 
-    if st.button("🔨 Build Index"):
-        with st.spinner("Building index, please wait..."):
-            encryptor.build_index_from_files(files, password)
-            encryptor.save_index(index_path)
-            st.session_state.index_ready = True
-            st.success("✅ Index built and saved!")
+    # בניית אינדקס + שמירה
+    if st.button("🔒 Encrypt & Build Index"):
+        with st.spinner("Encrypting files and building index..."):
+            try:
+                encryptor.build_index_from_files(files, password)
+                encryptor.save_index(index_path)
+                st.session_state.index_ready = True
+                st.success("✅ Index built and saved.")
+            except Exception as e:
+                st.error(f"❌ Failed to build index: {e}")
 
+    # טעינה ידנית של אינדקס
     if st.button("📦 Load Index"):
         try:
             encryptor.load_index(index_path)
@@ -44,6 +55,7 @@ if password:
         except Exception as e:
             st.error(f"❌ Error loading index: {e}")
 
+    # חיפוש
     if st.session_state.index_ready:
         search_query = st.text_input("💬 Search by text")
         image_file = st.file_uploader("🖼️ Or upload an image to search", type=["jpg", "jpeg", "png"])
@@ -57,30 +69,24 @@ if password:
                     image_results = [r for r in results if r.lower().endswith((".jpg", ".jpeg", ".png"))][:3]
 
                     st.subheader("📄 Top text matches:")
-                    if text_results:
-                        for r in text_results:
-                            st.markdown(f"**`{os.path.basename(r)}`**")
-                            try:
-                                with open(r, "r", encoding="utf-8", errors="ignore") as f:
-                                    content = f.read(300)
-                                st.code(content.strip() + "...")
-                            except:
-                                st.warning("Could not preview text file.")
-                    else:
-                        st.info("No matching text files found.")
+                    for r in text_results:
+                        st.markdown(f"**{os.path.basename(r)}**")
+                        try:
+                            with open(r, "r", encoding="utf-8", errors="ignore") as f:
+                                content = f.read(300)
+                            st.code(content.strip() + "...")
+                        except:
+                            st.warning("Could not preview text file.")
 
                     st.subheader("🖼️ Top image matches:")
-                    if image_results:
-                        for r in image_results:
-                            st.markdown(f"**`{os.path.basename(r)}`**")
-                            st.image(r, width=300)
-                    else:
-                        st.info("No matching images found.")
+                    for r in image_results:
+                        st.markdown(f"**{os.path.basename(r)}**")
+                        st.image(r, width=300)
 
                 except Exception as e:
                     st.error(f"Search failed: {e}")
 
-            if image_file:
+            elif image_file:
                 with open("temp_img.jpg", "wb") as f:
                     f.write(image_file.read())
                 try:
@@ -90,26 +96,19 @@ if password:
                     image_results = [r for r in results if r.lower().endswith((".jpg", ".jpeg", ".png"))][:3]
 
                     st.subheader("📄 Top text matches (image query):")
-                    if text_results:
-                        for r in text_results:
-                            st.markdown(f"**`{os.path.basename(r)}`**")
-                            try:
-                                with open(r, "r", encoding="utf-8", errors="ignore") as f:
-                                    content = f.read(300)
-                                st.code(content.strip() + "...")
-                            except:
-                                st.warning("Could not preview text file.")
-                    else:
-                        st.info("No matching text files found.")
+                    for r in text_results:
+                        st.markdown(f"**{os.path.basename(r)}**")
+                        try:
+                            with open(r, "r", encoding="utf-8", errors="ignore") as f:
+                                content = f.read(300)
+                            st.code(content.strip() + "...")
+                        except:
+                            st.warning("Could not preview text file.")
 
                     st.subheader("🖼️ Top image matches:")
-                    if image_results:
-                        for r in image_results:
-                            st.markdown(f"**`{os.path.basename(r)}`**")
-                            st.image(r, width=300)
-                    else:
-                        st.write("_No matching images found._")
-
+                    for r in image_results:
+                        st.markdown(f"**{os.path.basename(r)}**")
+                        st.image(r, width=300)
 
                 except Exception as e:
                     st.error(f"Image search failed: {e}")
