@@ -112,3 +112,5 @@ if password and folder:
 
                 except Exception as e:
                     st.error(f"Image search failed: {e}")
+
+

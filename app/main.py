@@ -140,3 +140,4 @@ class CLIPSecureEncryptor:
             obj = pickle.load(f)
             self.data_refs = obj["data_refs"]
             self.encrypted_vectors = obj["encrypted_vectors"]
+
