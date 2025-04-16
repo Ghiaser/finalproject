@@ -6,16 +6,16 @@ from PIL import Image
 st.set_page_config(page_title="🔐 Secure Semantic Search", layout="centered")
 st.title("🔐 Secure Semantic File Search")
 
-# קלט של סיסמה
+# Password input
 password = st.text_input("🔑 Enter your secret password", type="password")
 
-# קלט של תיקייה
+# Folder path input
 folder = st.text_input("📁 Enter path to folder with files (txt / jpg / png)", value="C:\\shaked\\DATA")
 
-# נתיב לאינדקס
+# Path to save/load the index
 index_path = os.path.join(folder, "secure_index.pkl")
 
-# יצירת encryptor רק פעם אחת
+# Initialize encryptor and state only once
 if "index_ready" not in st.session_state:
     st.session_state.index_ready = False
 if "encryptor" not in st.session_state:
@@ -26,7 +26,7 @@ encryptor = st.session_state.encryptor
 if password and folder:
     files = [os.path.join(folder, f) for f in sorted(os.listdir(folder)) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.txt'))]
 
-    # טען אינדקס אם קיים
+    # Load existing index if it exists
     if not st.session_state.index_ready and os.path.exists(index_path):
         try:
             encryptor.load_index(index_path)
@@ -35,7 +35,7 @@ if password and folder:
         except Exception as e:
             st.error(f"❌ Failed to auto-load index: {e}")
 
-    # בניית אינדקס + שמירה
+    # Build new index and save it
     if st.button("🔒 Encrypt & Build Index"):
         with st.spinner("Encrypting files and building index..."):
             try:
@@ -46,7 +46,7 @@ if password and folder:
             except Exception as e:
                 st.error(f"❌ Failed to build index: {e}")
 
-    # טעינה ידנית של אינדקס
+    # Manual loading of index
     if st.button("📦 Load Index"):
         try:
             encryptor.load_index(index_path)
@@ -55,7 +55,7 @@ if password and folder:
         except Exception as e:
             st.error(f"❌ Error loading index: {e}")
 
-    # חיפוש
+    # Search section
     if st.session_state.index_ready:
         search_query = st.text_input("💬 Search by text")
         image_file = st.file_uploader("🖼️ Or upload an image to search", type=["jpg", "jpeg", "png"])
