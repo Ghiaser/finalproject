@@ -1,74 +1,58 @@
 import os
 import streamlit as st
-import tempfile
 from main import CLIPSecureEncryptor
 
-# הגדרות ממשק
-st.set_page_config(page_title="🔐 חיפוש סמנטי מאובטח", layout="centered")
-st.title("🔍 חיפוש סמנטי בכל סוגי הקבצים")
+st.set_page_config(page_title="🔐 Secure Clip Test", layout="centered")
+st.title("🧪 Test Secure Semantic Search")
 
-# נתיבים
-index_path = "/home/danielbes/Desktop/BETA/app/app/my_index.pkl"
-data_folder = "/home/danielbes/Desktop/BETA/DATA"
+password = st.text_input("Enter your password", type="password")
+index_path = "encrypted_index.pkl"
+data_folder = "./DATA"
 
-# קלט סיסמה
-password = st.text_input("הכנס סיסמה", type="password")
+if password:
+    if "encryptor" not in st.session_state:
+        st.session_state.encryptor = CLIPSecureEncryptor()
 
-# אתחול סטייטים
-if "encryptor" not in st.session_state:
-    st.session_state.encryptor = None
-if "index_ready" not in st.session_state:
-    st.session_state.index_ready = False
+    encryptor = st.session_state.encryptor
+    files = [os.path.join(data_folder, f) for f in os.listdir(data_folder)
+             if f.lower().endswith((".txt", ".jpg", ".jpeg", ".png"))]
 
-# טעינת אינדקס אוטומטית
-if password and os.path.exists(index_path) and not st.session_state.index_ready:
-    try:
-        encryptor = CLIPSecureEncryptor(password)
-        encryptor.load_index(index_path)
-        st.session_state.encryptor = encryptor
-        st.session_state.index_ready = True
-        st.success("✅ אינדקס נטען אוטומטית.")
-    except Exception as e:
-        st.error(f"שגיאה בטעינה: {e}")
-
-# בניית אינדקס חדש
-if st.button("🔨 בנה אינדקס חדש") and password:
-    try:
-        encryptor = CLIPSecureEncryptor(password)
-        files = [os.path.join(data_folder, f) for f in os.listdir(data_folder) if os.path.isfile(os.path.join(data_folder, f))]
-        encryptor.build_index_from_files(files)
-        encryptor.save_index(index_path)
-        st.session_state.encryptor = encryptor
-        st.session_state.index_ready = True
-        st.success("✅ אינדקס נבנה ונשמר.")
-    except Exception as e:
-        st.error(f"שגיאה בבניית אינדקס: {e}")
-
-# חיפוש טקסטואלי
-if st.session_state.index_ready:
-    st.subheader("💬 חיפוש לפי טקסט")
-    query = st.text_input("טקסט לחיפוש:")
-    if st.button("🔍 חפש טקסט"):
+    if st.button("🔨 Build Index"):
         try:
-            results = st.session_state.encryptor.query_text(query)
-            st.markdown("### 📁 תוצאות:")
-            for path in results:
-                st.write(f"📄 {os.path.basename(path)}")
+            encryptor.build_index_from_files(files, password)
+            encryptor.save_index(index_path, password)
+            st.success("✅ Index built and saved with signature.")
         except Exception as e:
-            st.error(f"שגיאה בחיפוש טקסט: {e}")
+            st.error(f"❌ Failed to build index: {e}")
 
-    st.subheader("📁 העלאת קובץ לחיפוש")
-    uploaded = st.file_uploader("בחר קובץ", type=None)
-    if uploaded and st.button("🔍 חפש לפי קובץ"):
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(uploaded.read())
-            tmp_path = tmp.name
+    if st.button("📥 Load Index"):
         try:
-            results = st.session_state.encryptor.query_file(tmp_path)
-            st.markdown("### 📁 תוצאות:")
-            for path in results:
-                st.write(f"📄 {os.path.basename(path)}")
+            encryptor.load_index(index_path, password)
+            st.success("✅ Index loaded and signature verified.")
         except Exception as e:
-            st.error(f"שגיאה בחיפוש לפי קובץ: {e}")
+            st.error(f"❌ Failed to load index: {e}")
+
+    st.subheader("💬 Search Text")
+    query = st.text_input("Enter your search query")
+    if st.button("🔍 Search") and query:
+        try:
+            results = encryptor.query_text(query, password, k=5)
+            for ref, _ in results:
+                st.write(f"📄 {os.path.basename(ref)}")
+        except Exception as e:
+            st.error(f"Search failed: {e}")
+
+    st.subheader("🖼️ Upload Image to Search")
+    image = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+    if st.button("🔍 Search Image") and image:
+        temp_path = "temp_uploaded.jpg"
+        with open(temp_path, "wb") as f:
+            f.write(image.read())
+        try:
+            results = encryptor.query_image(temp_path, password, k=5)
+            for ref, _ in results:
+                st.write(f"🖼️ {os.path.basename(ref)}")
+        except Exception as e:
+            st.error(f"Image search failed: {e}")
         finally:
-            os.remove(tmp_path)
+            os.remove(temp_path)
