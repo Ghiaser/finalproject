@@ -1,116 +1,74 @@
 import os
 import streamlit as st
-from main_final import CLIPSecureEncryptor
-from PIL import Image
+import tempfile
+from main import CLIPSecureEncryptor
 
-st.set_page_config(page_title="🔐 Secure Semantic Search", layout="centered")
-st.title("🔐 Secure Semantic File Search")
+# הגדרות ממשק
+st.set_page_config(page_title="🔐 חיפוש סמנטי מאובטח", layout="centered")
+st.title("🔍 חיפוש סמנטי בכל סוגי הקבצים")
 
-# Password input
-password = st.text_input("🔑 Enter your secret password", type="password")
+# נתיבים
+index_path = "/home/danielbes/Desktop/BETA/app/app/my_index.pkl"
+data_folder = "/home/danielbes/Desktop/BETA/DATA"
 
-# Folder path input
-folder = st.text_input("📁 Enter path to folder with files (txt / jpg / png)", value="C:\\shaked\\DATA")
+# קלט סיסמה
+password = st.text_input("הכנס סיסמה", type="password")
 
-# Path to save/load the index
-index_path = os.path.join(folder, "secure_index.pkl")
-
-# Initialize encryptor and state only once
+# אתחול סטייטים
+if "encryptor" not in st.session_state:
+    st.session_state.encryptor = None
 if "index_ready" not in st.session_state:
     st.session_state.index_ready = False
-if "encryptor" not in st.session_state:
-    st.session_state.encryptor = CLIPSecureEncryptor()
 
-encryptor = st.session_state.encryptor
+# טעינת אינדקס אוטומטית
+if password and os.path.exists(index_path) and not st.session_state.index_ready:
+    try:
+        encryptor = CLIPSecureEncryptor(password)
+        encryptor.load_index(index_path)
+        st.session_state.encryptor = encryptor
+        st.session_state.index_ready = True
+        st.success("✅ אינדקס נטען אוטומטית.")
+    except Exception as e:
+        st.error(f"שגיאה בטעינה: {e}")
 
-if password and folder:
-    files = [os.path.join(folder, f) for f in sorted(os.listdir(folder)) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.txt'))]
+# בניית אינדקס חדש
+if st.button("🔨 בנה אינדקס חדש") and password:
+    try:
+        encryptor = CLIPSecureEncryptor(password)
+        files = [os.path.join(data_folder, f) for f in os.listdir(data_folder) if os.path.isfile(os.path.join(data_folder, f))]
+        encryptor.build_index_from_files(files)
+        encryptor.save_index(index_path)
+        st.session_state.encryptor = encryptor
+        st.session_state.index_ready = True
+        st.success("✅ אינדקס נבנה ונשמר.")
+    except Exception as e:
+        st.error(f"שגיאה בבניית אינדקס: {e}")
 
-    # Load existing index if it exists
-    if not st.session_state.index_ready and os.path.exists(index_path):
+# חיפוש טקסטואלי
+if st.session_state.index_ready:
+    st.subheader("💬 חיפוש לפי טקסט")
+    query = st.text_input("טקסט לחיפוש:")
+    if st.button("🔍 חפש טקסט"):
         try:
-            encryptor.load_index(index_path)
-            st.session_state.index_ready = True
-            st.success("✅ Index auto-loaded.")
+            results = st.session_state.encryptor.query_text(query)
+            st.markdown("### 📁 תוצאות:")
+            for path in results:
+                st.write(f"📄 {os.path.basename(path)}")
         except Exception as e:
-            st.error(f"❌ Failed to auto-load index: {e}")
+            st.error(f"שגיאה בחיפוש טקסט: {e}")
 
-    # Build new index and save it
-    if st.button("🔒 Encrypt & Build Index"):
-        with st.spinner("Encrypting files and building index..."):
-            try:
-                encryptor.build_index_from_files(files, password)
-                encryptor.save_index(index_path)
-                st.session_state.index_ready = True
-                st.success("✅ Index built and saved.")
-            except Exception as e:
-                st.error(f"❌ Failed to build index: {e}")
-
-    # Manual loading of index
-    if st.button("📦 Load Index"):
+    st.subheader("📁 העלאת קובץ לחיפוש")
+    uploaded = st.file_uploader("בחר קובץ", type=None)
+    if uploaded and st.button("🔍 חפש לפי קובץ"):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(uploaded.read())
+            tmp_path = tmp.name
         try:
-            encryptor.load_index(index_path)
-            st.session_state.index_ready = True
-            st.success("✅ Index loaded.")
+            results = st.session_state.encryptor.query_file(tmp_path)
+            st.markdown("### 📁 תוצאות:")
+            for path in results:
+                st.write(f"📄 {os.path.basename(path)}")
         except Exception as e:
-            st.error(f"❌ Error loading index: {e}")
-
-    # Search section
-    if st.session_state.index_ready:
-        search_query = st.text_input("💬 Search by text")
-        image_file = st.file_uploader("🖼️ Or upload an image to search", type=["jpg", "jpeg", "png"])
-
-        if st.button("🔍 Search"):
-            if search_query:
-                try:
-                    results = encryptor.query_text(search_query, password=password, k=10)
-
-                    text_results = [r for r in results if r.lower().endswith(".txt")][:3]
-                    image_results = [r for r in results if r.lower().endswith((".jpg", ".jpeg", ".png"))][:3]
-
-                    st.subheader("📄 Top text matches:")
-                    for r in text_results:
-                        st.markdown(f"**{os.path.basename(r)}**")
-                        try:
-                            with open(r, "r", encoding="utf-8", errors="ignore") as f:
-                                content = f.read(300)
-                            st.code(content.strip() + "...")
-                        except:
-                            st.warning("Could not preview text file.")
-
-                    st.subheader("🖼️ Top image matches:")
-                    for r in image_results:
-                        st.markdown(f"**{os.path.basename(r)}**")
-                        st.image(r, width=300)
-
-                except Exception as e:
-                    st.error(f"Search failed: {e}")
-
-            elif image_file:
-                with open("temp_img.jpg", "wb") as f:
-                    f.write(image_file.read())
-                try:
-                    results = encryptor.query_image("temp_img.jpg", password=password, k=10)
-
-                    text_results = [r for r in results if r.lower().endswith(".txt")][:3]
-                    image_results = [r for r in results if r.lower().endswith((".jpg", ".jpeg", ".png"))][:3]
-
-                    st.subheader("📄 Top text matches (image query):")
-                    for r in text_results:
-                        st.markdown(f"**{os.path.basename(r)}**")
-                        try:
-                            with open(r, "r", encoding="utf-8", errors="ignore") as f:
-                                content = f.read(300)
-                            st.code(content.strip() + "...")
-                        except:
-                            st.warning("Could not preview text file.")
-
-                    st.subheader("🖼️ Top image matches:")
-                    for r in image_results:
-                        st.markdown(f"**{os.path.basename(r)}**")
-                        st.image(r, width=300)
-
-                except Exception as e:
-                    st.error(f"Image search failed: {e}")
-
-
+            st.error(f"שגיאה בחיפוש לפי קובץ: {e}")
+        finally:
+            os.remove(tmp_path)
