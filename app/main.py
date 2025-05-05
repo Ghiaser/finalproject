@@ -37,7 +37,7 @@ def verify_signature(path: str, key: str, signature: str) -> bool:
 
 
 class CLIPSecureEncryptor:
-    def __init__(self, device='cuda' if torch.cuda.is_available() else 'cpu'):
+    def __init__(self, device='cpu'):  # Force CPU to avoid CUDA/OpenMP conflicts
         self.device = device
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
