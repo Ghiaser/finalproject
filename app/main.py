@@ -1,169 +1,87 @@
 import os
 import base64
 import hashlib
-import hmac
-import pickle
+import tenseal as ts
 import numpy as np
 from PIL import Image
-from typing import List, Tuple
+from typing import List
 
 import torch
 from transformers import CLIPProcessor, CLIPModel
 import faiss
 from cryptography.fernet import Fernet
+import pickle
 
 
 def generate_fernet_key(password: str) -> bytes:
     hashed = hashlib.sha256(password.encode()).digest()
     return base64.urlsafe_b64encode(hashed)
 
+def create_ckks_context():
+    context = ts.context(
+        ts.SCHEME_TYPE.CKKS,
+        poly_modulus_degree=8192,
+        coeff_mod_bit_sizes=[60, 40, 40, 60]
+    )
+    context.generate_galois_keys()
+    context.global_scale = 2 ** 40
+    return context
 
-def encrypt_vector(vec: np.ndarray, fernet: Fernet) -> bytes:
-    return fernet.encrypt(vec.tobytes())
+# יצירת ההקשר ההומומורפי
+ckks_context = create_ckks_context()
 
+def encrypt_vector_homomorphic(vec: np.ndarray, context: ts.Context) -> ts.CKKSVector:
+    return ts.ckks_vector(context, vec.flatten())
 
-def decrypt_vector(enc_bytes: bytes, shape, fernet: Fernet) -> np.ndarray:
-    return np.frombuffer(fernet.decrypt(enc_bytes), dtype=np.float32).reshape(shape)
+def decrypt_vector_homomorphic(enc_vec: ts.CKKSVector) -> np.ndarray:
+    return np.array(enc_vec.decrypt()).reshape(1, -1)
 
-
-def sign_file(path: str, key: str) -> str:
-    with open(path, 'rb') as f:
+def encrypt_file(file_path: str, password: str):
+    key = generate_fernet_key(password)
+    fernet = Fernet(key)
+    with open(file_path, 'rb') as f:
         data = f.read()
-    return hmac.new(key.encode(), data, hashlib.sha256).hexdigest()
+    encrypted = fernet.encrypt(data)
+    with open(file_path + '.enc', 'wb') as f:
+        f.write(encrypted)
+    os.remove(file_path)
 
+def decrypt_file(enc_file_path: str, password: str) -> bytes:
+    key = generate_fernet_key(password)
+    fernet = Fernet(key)
+    with open(enc_file_path, 'rb') as f:
+        encrypted = f.read()
+    return fernet.decrypt(encrypted)
 
-def verify_signature(path: str, key: str, signature: str) -> bool:
-    return sign_file(path, key) == signature
+def save_index(index_data, path: str):
+    with open(path, 'wb') as f:
+        pickle.dump(index_data, f)
 
+def load_index(path: str):
+    with open(path, 'rb') as f:
+        return pickle.load(f)
 
-class CLIPSecureEncryptor:
-    def __init__(self, device='cpu'):  # Force CPU to avoid CUDA/OpenMP conflicts
+class CLIPSecureEmbedder:
+    def __init__(self, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.device = device
-        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
-        self.index = None
-        self.data_refs = []
-        self.vector_shapes = []
-        self.fernet = None
+        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
+        self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to(self.device)
 
-    def encode_image(self, image_path: str) -> np.ndarray:
-        try:
-            image = Image.open(image_path).convert("RGB")
-            inputs = self.processor(images=image, return_tensors="pt").to(self.device)
-            with torch.no_grad():
-                vec = self.model.get_image_features(**inputs).cpu().numpy().astype("float32")
-            return vec / np.linalg.norm(vec)
-        except Exception as e:
-            print(f"Failed to encode image: {image_path} | Error: {e}")
-            return None
-
-    def encode_text_file(self, text_path: str) -> np.ndarray:
-        try:
-            with open(text_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            inputs = self.processor(
-                text=content,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=77
-            ).to(self.device)
-            with torch.no_grad():
-                vec = self.model.get_text_features(**inputs).cpu().numpy().astype("float32")
-            return vec / np.linalg.norm(vec)
-        except Exception as e:
-            print(f"Failed to encode text: {text_path} | Error: {e}")
-            return None
-
-    def build_index_from_files(self, file_paths: List[str], password: str):
-        self.model.eval()
-        self.fernet = Fernet(generate_fernet_key(password))
-        encrypted_vectors = []
-        self.data_refs = []
-        self.vector_shapes = []
-
-        for path in file_paths:
-            vec = None
-            if path.lower().endswith(('.jpg', '.jpeg', '.png')):
-                vec = self.encode_image(path)
-            elif path.lower().endswith('.txt'):
-                vec = self.encode_text_file(path)
-
-            if vec is not None:
-                try:
-                    enc_vec = encrypt_vector(vec, self.fernet)
-                    encrypted_vectors.append(enc_vec)
-                    self.vector_shapes.append(vec.shape)
-                    self.data_refs.append(self.fernet.encrypt(path.encode()).decode())
-                except Exception as e:
-                    print(f"Encryption or indexing error: {path} | Error: {e}")
-
-        if encrypted_vectors:
-            decrypted_matrix = [decrypt_vector(enc_vec, shape, self.fernet)
-                                for enc_vec, shape in zip(encrypted_vectors, self.vector_shapes)]
-            matrix = np.vstack(decrypted_matrix).astype("float32")
-            self.index = faiss.IndexFlatL2(matrix.shape[1])
-            self.index.add(matrix)
-        else:
-            raise ValueError("No valid vectors to index")
-
-    def _decrypt_refs(self):
-        return [self.fernet.decrypt(p.encode()).decode() for p in self.data_refs]
-
-    def query_text(self, query: str, password: str, k=10):
-        if self.index is None:
-            raise ValueError("Index is not loaded or built yet.")
-        self.fernet = Fernet(generate_fernet_key(password))
-        vec = self.processor(
-            text=query,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=77
-        ).to(self.device)
+    def embed_text(self, text: str) -> np.ndarray:
+        inputs = self.processor(text=[text], return_tensors="pt", padding=True).to(self.device)
         with torch.no_grad():
-            emb = self.model.get_text_features(**vec).cpu().numpy().astype("float32")
-        emb = emb / np.linalg.norm(emb)
-        enc_vec = encrypt_vector(emb, self.fernet)
-        query_vec = decrypt_vector(enc_vec, emb.shape, self.fernet)
-        distances, indices = self.index.search(query_vec, k)
-        refs = self._decrypt_refs()
-        return [(refs[i], distances[0][j]) for j, i in enumerate(indices[0])]
+            outputs = self.model.get_text_features(**inputs)
+        return outputs.cpu().numpy().flatten()
 
-    def query_image(self, image_path: str, password: str, k=3):
-        if self.index is None:
-            raise ValueError("Index is not loaded or built yet.")
-        self.fernet = Fernet(generate_fernet_key(password))
-        vec = self.encode_image(image_path)
-        enc_vec = encrypt_vector(vec, self.fernet)
-        query_vec = decrypt_vector(enc_vec, vec.shape, self.fernet)
-        distances, indices = self.index.search(query_vec, k)
-        refs = self._decrypt_refs()
-        return [(refs[i], distances[0][j]) for j, i in enumerate(indices[0])]
+    def embed_image(self, image_path: str) -> np.ndarray:
+        image = Image.open(image_path).convert("RGB")
+        inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            outputs = self.model.get_image_features(**inputs)
+        return outputs.cpu().numpy().flatten()
 
-    def save_index(self, path="encrypted_index.pkl", password: str = ""):
-        with open(path, "wb") as f:
-            pickle.dump({
-                "index": self.index,
-                "data_refs": self.data_refs,
-                "vector_shapes": self.vector_shapes
-            }, f)
-        if password:
-            signature = sign_file(path, password)
-            with open(path + ".sig", "w") as sig_file:
-                sig_file.write(signature)
+def encrypt_vector_ckks(vec: np.ndarray, context: ts.Context) -> ts.CKKSVector:
+    return ts.ckks_vector(context, vec.flatten())
 
-    def load_index(self, path="encrypted_index.pkl", password: str = ""):
-        sig_path = path + ".sig"
-        if not os.path.exists(sig_path):
-            raise ValueError("Missing index signature file")
-        with open(sig_path, "r") as sig_file:
-            signature = sig_file.read().strip()
-        if not verify_signature(path, password, signature):
-            raise ValueError("Index signature mismatch. Possible tampering detected.")
-
-        with open(path, "rb") as f:
-            obj = pickle.load(f)
-            self.index = obj["index"]
-            self.data_refs = obj["data_refs"]
-            self.vector_shapes = obj["vector_shapes"]
+def decrypt_vector_ckks(enc_vec: ts.CKKSVector) -> np.ndarray:
+    return np.array(enc_vec.decrypt()).reshape(-1)

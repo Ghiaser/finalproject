@@ -8,8 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
-from main import CLIPSecureEncryptor
-from user_manager import UserManager
+from app.encryptor import CLIPSecureEncryptor
+from app.user_manager import UserManager
 
 # Initialize FastAPI
 app = FastAPI(
@@ -31,7 +31,7 @@ app.add_middleware(
 security = HTTPBasic()
 
 # Initialize user manager
-user_manager = UserManager()
+user_manager = UserManager(users_file="app/users.json")
 
 # Initialize encryptor (will be user-specific in routes)
 encryptor = CLIPSecureEncryptor()

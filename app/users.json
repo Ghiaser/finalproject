@@ -12,5 +12,21 @@
     "indexes": [
       "test_index"
     ]
+  },
+  "shakedyudkovich": {
+    "id": "9f3bd6a8-fe4a-4bfe-9a8a-cbc840f9ea9a",
+    "password_hash": "6197e7fd9cb8fdf7072b2f9402f6cb73a015102a8743bb29d3f434c330e2e64d",
+    "indexes": [
+      "DATA"
+    ]
+  },
+  "demo1": {
+    "id": "639e7e83-9dec-4488-aaea-94c3342b0030",
+    "password_hash": "61ea51136a1eb39db39c889c9c53ebd21e5ce9e78721a6c2c40f8e16b782a879",
+    "salt": "aaa5ab77e2f245d7ca157ec2cfd6ca00",
+    "indexes": [
+      "DATA",
+      "new"
+    ]
   }
 }

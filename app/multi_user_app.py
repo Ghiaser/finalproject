@@ -1,193 +1,236 @@
-import os
 import streamlit as st
-import torch
-import warnings
-import shutil
-from main import CLIPSecureEncryptor
-from user_manager import UserManager
+import os
+import json
+import hashlib
+from main import (
+    CLIPSecureEmbedder,
+    create_ckks_context,
+    decrypt_vector_ckks,
+    encrypt_vector_ckks,
+    encrypt_file,
+    decrypt_file,
+    save_index,
+    load_index
+)
+import faiss
+import numpy as np
 
-# Suppress warnings
-warnings.filterwarnings("ignore")
+# ========== UTILS ==========
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
-# Set environment variable to fix OpenMP error
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+def normalize(vec):
+    norm = np.linalg.norm(vec)
+    return vec / norm if norm != 0 else vec
 
-# Force PyTorch to use CPU
-if torch.cuda.is_available():
-    torch.cuda.is_available = lambda: False
+# ========== USER MANAGEMENT ==========
+USER_FILE = "app/users.json"
+INDEX_PATH = "app/encrypted_index.pkl"
+VEC_DIM = 768
 
-st.set_page_config(page_title="🔐 Multi-User Secure CLIP", layout="centered")
+os.makedirs(os.path.dirname(USER_FILE), exist_ok=True)
+if not os.path.exists(USER_FILE):
+    with open(USER_FILE, "w") as f:
+        json.dump({}, f)
 
-# Initialize user manager
-user_manager = UserManager()
+def load_users():
+    with open(USER_FILE, "r") as f:
+        return json.load(f)
 
-# Initialize session state
-if "user" not in st.session_state:
-    st.session_state.user = None
-if "encryptor" not in st.session_state:
-    st.session_state.encryptor = CLIPSecureEncryptor()
-if "index_loaded" not in st.session_state:
-    st.session_state.index_loaded = False
+def save_users(users):
+    with open(USER_FILE, "w") as f:
+        json.dump(users, f, indent=2)
 
-# Authentication UI
-def show_auth():
-    st.title("🔐 Secure CLIP Search - Multi-User")
-    
-    tab1, tab2 = st.tabs(["Login", "Register"])
-    
-    with tab1:
-        with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Login")
-            
-            if submit and username and password:
-                success, message = user_manager.authenticate(username, password)
-                if success:
-                    st.session_state.user = username
-                    st.session_state.password = password  # Store for index operations
-                    st.session_state.index_loaded = False
-                    st.success(message)
-                    st.rerun()
-                else:
-                    st.error(message)
-    
-    with tab2:
-        with st.form("register_form"):
-            new_username = st.text_input("Username")
-            new_password = st.text_input("Password", type="password")
-            confirm_password = st.text_input("Confirm Password", type="password")
-            submit = st.form_submit_button("Register")
-            
-            if submit and new_username and new_password:
-                if new_password != confirm_password:
-                    st.error("Passwords do not match")
-                else:
-                    success, message = user_manager.create_user(new_username, new_password)
-                    if success:
-                        st.success(message)
-                    else:
-                        st.error(message)
+# ========== FLEXIBLE TEXT DECODING ==========
+def read_text_flexible(path):
+    encodings_to_try = ["utf-8", "windows-1255", "iso-8859-8", "cp1252", "latin1"]
+    for enc in encodings_to_try:
+        try:
+            with open(path, "r", encoding=enc) as f:
+                return f.read()
+        except UnicodeDecodeError:
+            continue
+    raise UnicodeDecodeError("Could not decode file with any known encoding.")
 
-# Main app UI
-def show_app():
-    st.title(f"🧪 Secure Semantic Search - {st.session_state.user}")
-    
-    if st.sidebar.button("Logout"):
-        st.session_state.user = None
-        st.session_state.password = None
-        st.session_state.index_loaded = False
-        st.rerun()
-    
-    username = st.session_state.user
-    password = st.session_state.password
-    user_folder = user_manager.get_user_folder(username)
-    data_folder = f"{user_folder}/data"
-    indexes_folder = f"{user_folder}/indexes"
-    
-    # Sidebar for data management
-    with st.sidebar:
-        st.header("Data Management")
-        
-        # File upload
-        uploaded_files = st.file_uploader("Upload files", type=["txt", "jpg", "jpeg", "png"], accept_multiple_files=True)
-        if uploaded_files:
-            for file in uploaded_files:
-                file_path = os.path.join(data_folder, file.name)
-                with open(file_path, "wb") as f:
-                    f.write(file.getbuffer())
-            st.success(f"Uploaded {len(uploaded_files)} files to your data folder")
-            
-        # Show existing files
-        st.subheader("Your Files")
-        if os.path.exists(data_folder):
-            files = [f for f in os.listdir(data_folder) 
-                    if f.lower().endswith((".txt", ".jpg", ".jpeg", ".png"))]
-            if files:
-                for file in files:
-                    st.write(f"- {file}")
-            else:
-                st.write("No files found. Upload some files to get started.")
-    
-    # Main content for search
-    st.header("Index Management")
-    
-    tab1, tab2 = st.tabs(["Create Index", "Load Index"])
-    
-    with tab1:
-        index_name = st.text_input("Index Name")
-        if st.button("🔨 Build Index") and index_name:
-            try:
-                files = [os.path.join(data_folder, f) for f in os.listdir(data_folder)
-                         if f.lower().endswith((".txt", ".jpg", ".jpeg", ".png"))]
-                
-                if not files:
-                    st.error("No files found in your data folder. Upload some files first.")
-                else:
-                    encryptor = st.session_state.encryptor
-                    encryptor.build_index_from_files(files, password)
-                    
-                    index_path = os.path.join(indexes_folder, f"{index_name}.pkl")
-                    encryptor.save_index(index_path, password)
-                    
-                    user_manager.add_user_index(username, index_name)
-                    st.session_state.index_loaded = True
-                    st.success("✅ Index built and saved with signature.")
-            except Exception as e:
-                st.error(f"❌ Failed to build index: {e}")
-    
-    with tab2:
-        user_indexes = user_manager.get_user_indexes(username)
-        if not user_indexes:
-            st.info("You don't have any indexes yet. Create one in the 'Create Index' tab.")
-        else:
-            selected_index = st.selectbox("Select an index", user_indexes)
-            if st.button("📥 Load Index") and selected_index:
-                try:
-                    index_path = os.path.join(indexes_folder, f"{selected_index}.pkl")
-                    encryptor = st.session_state.encryptor
-                    encryptor.load_index(index_path, password)
-                    st.session_state.index_loaded = True
-                    st.success("✅ Index loaded and signature verified.")
-                except Exception as e:
-                    st.error(f"❌ Failed to load index: {e}")
-    
-    # Search functionality
-    st.header("Search")
-    
-    if not st.session_state.index_loaded:
-        st.info("Please build or load an index first to enable search functionality.")
+# ========== INIT ==========
+st.set_page_config(page_title="🔐 Multi-User Secure Search", layout="wide")
+embedder = CLIPSecureEmbedder()
+context = create_ckks_context()
+
+if "index" not in st.session_state:
+    st.session_state.index = faiss.IndexFlatIP(VEC_DIM)
+    st.session_state.file_map = []
+
+# ========== AUTH ==========
+st.sidebar.title("👤 User Login")
+users = load_users()
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
+authenticated = False
+
+if st.sidebar.button("🔐 Login"):
+    if username in users and users[username]["password_hash"] == hash_password(password):
+        st.session_state.user = username
+        authenticated = True
+        st.sidebar.success(f"Welcome, {username}!")
     else:
-        st.subheader("💬 Text Search")
-        query = st.text_input("Enter your search query")
-        if st.button("🔍 Search Text") and query:
-            try:
-                results = st.session_state.encryptor.query_text(query, password, k=5)
-                st.subheader("Results:")
-                for i, (ref, score) in enumerate(results):
-                    st.write(f"{i+1}. 📄 {os.path.basename(ref)} (Score: {score:.2f})")
-            except Exception as e:
-                st.error(f"Search failed: {e}")
-        
-        st.subheader("🖼️ Image Search")
-        image = st.file_uploader("Upload an image to search", type=["jpg", "jpeg", "png"])
-        if st.button("🔍 Search Image") and image:
-            temp_path = "temp_uploaded.jpg"
-            with open(temp_path, "wb") as f:
-                f.write(image.read())
-            try:
-                results = st.session_state.encryptor.query_image(temp_path, password, k=5)
-                st.subheader("Results:")
-                for i, (ref, score) in enumerate(results):
-                    st.write(f"{i+1}. 🖼️ {os.path.basename(ref)} (Score: {score:.2f})")
-            except Exception as e:
-                st.error(f"Image search failed: {e}")
-            finally:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+        st.sidebar.error("Invalid credentials")
 
-# Main app flow
-if st.session_state.user is None:
-    show_auth()
+if st.sidebar.button("📝 Register"):
+    if username not in users:
+        users[username] = {"password_hash": hash_password(password)}
+        save_users(users)
+        st.sidebar.success("User registered successfully!")
+    else:
+        st.sidebar.warning("User already exists")
+
+# ========== MAIN APP ==========
+if "user" in st.session_state:
+    option = st.sidebar.radio("Choose action:", ["🔍 Search", "📁 Upload Files", "🔓 Decrypt File", "🔬 Compare Vectors"])
+
+    if option == "📁 Upload Files":
+        st.header(f"📁 Upload Files for User: {st.session_state.user}")
+        files = st.file_uploader("Upload images or text files", type=["jpg", "png", "jpeg", "txt"], accept_multiple_files=True)
+
+        if st.button("🔐 Encrypt and Add to Index"):
+            for file in files:
+                file_path = os.path.join("app/data", file.name)
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+                with open(file_path, "wb") as f:
+                    f.write(file.read())
+
+                if file.type.startswith("image"):
+                    vec = embedder.embed_image(file_path)
+                else:
+                    text = read_text_flexible(file_path)
+                    vec = embedder.embed_text(text)
+
+                encrypt_file(file_path, password)
+                enc_vec = encrypt_vector_ckks(vec, context)
+                dec_vec = decrypt_vector_ckks(enc_vec)
+                norm_vec = normalize(dec_vec)
+                st.session_state.index.add(np.array([norm_vec]).astype("float32"))
+                st.session_state.file_map.append(file.name)
+
+            save_index((st.session_state.index, st.session_state.file_map), INDEX_PATH)
+            st.success("✅ Files encrypted and indexed")
+
+    elif option == "🔍 Search":
+        st.header("🔍 Semantic Search")
+        query_type = st.radio("Choose query type:", ["Text", "Image"])
+
+        vec = None
+        query_label = ""
+        if query_type == "Text":
+            query = st.text_input("Enter search text")
+            if st.button("Search") and query:
+                query_label = query
+                vec = embedder.embed_text(query)
+
+        elif query_type == "Image":
+            uploaded_image = st.file_uploader("Upload query image", type=["jpg", "png", "jpeg"], key="query_img")
+            if st.button("Search") and uploaded_image:
+                temp_path = os.path.join("app/temp_query_image.jpg")
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_image.read())
+                query_label = uploaded_image.name
+                vec = embedder.embed_image(temp_path)
+
+        if vec is not None:
+            if not os.path.exists(INDEX_PATH):
+                st.error("No index found")
+            else:
+                index, file_map = load_index(INDEX_PATH)
+                enc_vec = encrypt_vector_ckks(vec, context)
+                dec_vec = decrypt_vector_ckks(enc_vec)
+                norm_vec = normalize(dec_vec)
+                st.write("🔢 Vector length:", len(norm_vec))
+                st.write("📏 Norm:", np.linalg.norm(norm_vec))
+                D, I = index.search(np.array([norm_vec]).astype("float32"), k=5)
+
+                st.subheader(f"🔎 Top Results for '{query_label}' (lower = more similar):")
+                for idx, (i, dist) in enumerate(zip(I[0], D[0])):
+                    filename = file_map[i]
+                    encrypted_path = os.path.join("app/data", filename + ".enc")
+                    try:
+                        decrypted = decrypt_file(encrypted_path, password)
+                        with st.container():
+                            st.markdown(f"**Similarity Score:** {dist:.4f}")
+                            if filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                                from PIL import Image
+                                import io
+                                image = Image.open(io.BytesIO(decrypted))
+                                st.image(image, caption=f"🖼️ {filename}", width=200, use_container_width=False)
+                                st.download_button(
+                                    label="⬇️ Download Image",
+                                    data=decrypted,
+                                    file_name=filename,
+                                    mime="image/jpeg",
+                                    key=f"download_img_{idx}"
+                                )
+                            elif filename.lower().endswith(".txt"):
+                                text_full = decrypted.decode("utf-8", errors="ignore")
+                                text_preview = text_full[:300]
+                                st.markdown(f"📄 **{filename}**")
+                                st.text_area("Preview:", text_preview, height=80, key=f"preview_{idx}")
+                                with st.expander("📖 Show full text", expanded=False):
+                                    st.text_area("Full Text:", text_full, height=160, key=f"full_text_{idx}")
+                                st.download_button(
+                                    label="⬇️ Download Text File",
+                                    data=text_full,
+                                    file_name=filename,
+                                    mime="text/plain",
+                                    key=f"download_txt_{idx}"
+                                )
+                            else:
+                                st.markdown(f"📁 {filename} (Unsupported preview type)")
+                    except Exception as e:
+                        st.error(f"❌ Failed to decrypt {filename}: {str(e)}")
+
+    elif option == "🔬 Compare Vectors":
+        st.header("🔬 Compare text and image embedding vectors")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            text_query = st.text_input("Enter text (e.g. 'ring')", key="cmp_text")
+            if text_query:
+                text_vec = embedder.embed_text(text_query)
+
+        with col2:
+            cmp_image = st.file_uploader("Upload image", type=["jpg", "jpeg", "png"], key="cmp_img")
+            if cmp_image:
+                temp_path = os.path.join("app/temp_cmp_image.jpg")
+                with open(temp_path, "wb") as f:
+                    f.write(cmp_image.read())
+                img_vec = embedder.embed_image(temp_path)
+
+        if text_query and cmp_image:
+            norm_text = normalize(text_vec)
+            norm_img = normalize(img_vec)
+            dist = np.dot(norm_text, norm_img)
+            st.success(f"Cosine similarity between '{text_query}' and image: {dist:.4f} (higher = more similar)")
+
+    elif option == "🔓 Decrypt File":
+        st.header("🔓 Decrypt File")
+        enc_file = st.file_uploader("Upload .enc file", type=["enc"])
+
+        if st.button("🔓 Decrypt") and enc_file:
+            encrypted_path = os.path.join("app/data", enc_file.name)
+            with open(encrypted_path, "wb") as f:
+                f.write(enc_file.read())
+
+            try:
+                decrypted = decrypt_file(encrypted_path, password)
+                st.success("✅ Decryption successful")
+                if enc_file.name.endswith(".jpg.enc"):
+                    from PIL import Image
+                    import io
+                    image = Image.open(io.BytesIO(decrypted))
+                    st.image(image, caption="Decrypted Image")
+                else:
+                    st.text_area("Decrypted Content", decrypted.decode("utf-8"))
+            except Exception as e:
+                st.error(f"❌ Decryption failed: {str(e)}")
 else:
-    show_app()
+    st.warning("🔐 Please log in to use the application")
