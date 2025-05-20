@@ -154,7 +154,7 @@ if "user" in st.session_state:
                 norm_vec = normalize(dec_vec)
                 D, I = index.search(np.array([norm_vec]).astype("float32"), k=5)
 
-                st.subheader(f"🔎 Top Results for '{query_label}' (lower = more similar):")
+                st.subheader(f"🔎 Top Results for '{query_label}' (higher = more similar):")
                 for idx, (i, dist) in enumerate(zip(I[0], D[0])):
                     filename = file_map[i]
                     encrypted_path = os.path.join(data_folder, filename + ".enc")
