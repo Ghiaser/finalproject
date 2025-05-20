@@ -4,16 +4,18 @@ import faiss
 import pickle
 from PIL import Image
 from cryptography.fernet import Fernet
-from app.main import (
+from main import (
     CLIPSecureEmbedder,
     encrypt_vector_ckks,
     decrypt_vector_ckks,
-    generate_fernet_key
+    generate_fernet_key,
+    create_ckks_context
 )
 
 class CLIPSecureEncryptor:
     def __init__(self, vec_dim=768):
         self.embedder = CLIPSecureEmbedder()
+        self.context = create_ckks_context()
         self.index = faiss.IndexFlatIP(vec_dim)
         self.file_map = []
 
@@ -53,7 +55,7 @@ class CLIPSecureEncryptor:
                     continue
 
                 self.encrypt_file(file_path, password)
-                enc_vec = encrypt_vector_ckks(vec, self.embedder.context)
+                enc_vec = encrypt_vector_ckks(vec, self.context)
                 dec_vec = decrypt_vector_ckks(enc_vec)
                 norm_vec = self.normalize(dec_vec)
                 vectors.append(norm_vec.astype('float32'))
@@ -81,14 +83,18 @@ class CLIPSecureEncryptor:
 
     def query_text(self, query, password, k=5):
         vec = self.embedder.embed_text(query)
-        norm_vec = self.normalize(vec)
+        enc_vec = encrypt_vector_ckks(vec, self.context)
+        dec_vec = decrypt_vector_ckks(enc_vec)
+        norm_vec = self.normalize(dec_vec)
         D, I = self.index.search(np.array([norm_vec]).astype('float32'), k)
         results = [(self.file_map[i], D[0][idx]) for idx, i in enumerate(I[0])]
         return results
 
     def query_image(self, image_path, password, k=5):
         vec = self.embedder.embed_image(image_path)
-        norm_vec = self.normalize(vec)
+        enc_vec = encrypt_vector_ckks(vec, self.context)
+        dec_vec = decrypt_vector_ckks(enc_vec)
+        norm_vec = self.normalize(dec_vec)
         D, I = self.index.search(np.array([norm_vec]).astype('float32'), k)
         results = [(self.file_map[i], D[0][idx]) for idx, i in enumerate(I[0])]
         return results

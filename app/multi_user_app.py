@@ -10,7 +10,8 @@ from main import (
     encrypt_file,
     decrypt_file,
     save_index,
-    load_index
+    load_index,
+    generate_fernet_key
 )
 import faiss
 import numpy as np
@@ -25,7 +26,6 @@ def normalize(vec):
 
 # ========== USER MANAGEMENT ==========
 USER_FILE = "app/users.json"
-INDEX_PATH = "app/encrypted_index.pkl"
 VEC_DIM = 768
 
 os.makedirs(os.path.dirname(USER_FILE), exist_ok=True)
@@ -57,10 +57,6 @@ st.set_page_config(page_title="🔐 Multi-User Secure Search", layout="wide")
 embedder = CLIPSecureEmbedder()
 context = create_ckks_context()
 
-if "index" not in st.session_state:
-    st.session_state.index = faiss.IndexFlatIP(VEC_DIM)
-    st.session_state.file_map = []
-
 # ========== AUTH ==========
 st.sidebar.title("👤 User Login")
 users = load_users()
@@ -86,16 +82,25 @@ if st.sidebar.button("📝 Register"):
 
 # ========== MAIN APP ==========
 if "user" in st.session_state:
+    username = st.session_state.user
+    data_folder = os.path.join("user_data", username, "data")
+    index_path = os.path.join("user_data", username, "indexes", "index.pkl")
+    os.makedirs(data_folder, exist_ok=True)
+    os.makedirs(os.path.dirname(index_path), exist_ok=True)
+
+    if "index" not in st.session_state:
+        st.session_state.index = faiss.IndexFlatIP(VEC_DIM)
+        st.session_state.file_map = []
+
     option = st.sidebar.radio("Choose action:", ["🔍 Search", "📁 Upload Files", "🔓 Decrypt File", "🔬 Compare Vectors"])
 
     if option == "📁 Upload Files":
-        st.header(f"📁 Upload Files for User: {st.session_state.user}")
+        st.header(f"📁 Upload Files for User: {username}")
         files = st.file_uploader("Upload images or text files", type=["jpg", "png", "jpeg", "txt"], accept_multiple_files=True)
 
         if st.button("🔐 Encrypt and Add to Index"):
             for file in files:
-                file_path = os.path.join("app/data", file.name)
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                file_path = os.path.join(data_folder, file.name)
 
                 with open(file_path, "wb") as f:
                     f.write(file.read())
@@ -106,14 +111,16 @@ if "user" in st.session_state:
                     text = read_text_flexible(file_path)
                     vec = embedder.embed_text(text)
 
-                encrypt_file(file_path, password)
+                fernet_key = generate_fernet_key(password)
+                encrypt_file(file_path, fernet_key)
+
                 enc_vec = encrypt_vector_ckks(vec, context)
                 dec_vec = decrypt_vector_ckks(enc_vec)
                 norm_vec = normalize(dec_vec)
                 st.session_state.index.add(np.array([norm_vec]).astype("float32"))
                 st.session_state.file_map.append(file.name)
 
-            save_index((st.session_state.index, st.session_state.file_map), INDEX_PATH)
+            save_index((st.session_state.index, st.session_state.file_map), index_path)
             st.success("✅ Files encrypted and indexed")
 
     elif option == "🔍 Search":
@@ -138,23 +145,22 @@ if "user" in st.session_state:
                 vec = embedder.embed_image(temp_path)
 
         if vec is not None:
-            if not os.path.exists(INDEX_PATH):
+            if not os.path.exists(index_path):
                 st.error("No index found")
             else:
-                index, file_map = load_index(INDEX_PATH)
+                index, file_map = load_index(index_path)
                 enc_vec = encrypt_vector_ckks(vec, context)
                 dec_vec = decrypt_vector_ckks(enc_vec)
                 norm_vec = normalize(dec_vec)
-                st.write("🔢 Vector length:", len(norm_vec))
-                st.write("📏 Norm:", np.linalg.norm(norm_vec))
                 D, I = index.search(np.array([norm_vec]).astype("float32"), k=5)
 
                 st.subheader(f"🔎 Top Results for '{query_label}' (lower = more similar):")
                 for idx, (i, dist) in enumerate(zip(I[0], D[0])):
                     filename = file_map[i]
-                    encrypted_path = os.path.join("app/data", filename + ".enc")
+                    encrypted_path = os.path.join(data_folder, filename + ".enc")
                     try:
-                        decrypted = decrypt_file(encrypted_path, password)
+                        fernet_key = generate_fernet_key(password)
+                        decrypted = decrypt_file(encrypted_path, fernet_key)
                         with st.container():
                             st.markdown(f"**Similarity Score:** {dist:.4f}")
                             if filename.lower().endswith((".jpg", ".jpeg", ".png")):
@@ -216,12 +222,13 @@ if "user" in st.session_state:
         enc_file = st.file_uploader("Upload .enc file", type=["enc"])
 
         if st.button("🔓 Decrypt") and enc_file:
-            encrypted_path = os.path.join("app/data", enc_file.name)
+            encrypted_path = os.path.join(data_folder, enc_file.name)
             with open(encrypted_path, "wb") as f:
                 f.write(enc_file.read())
 
             try:
-                decrypted = decrypt_file(encrypted_path, password)
+                fernet_key = generate_fernet_key(password)
+                decrypted = decrypt_file(encrypted_path, fernet_key)
                 st.success("✅ Decryption successful")
                 if enc_file.name.endswith(".jpg.enc"):
                     from PIL import Image

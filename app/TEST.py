@@ -17,8 +17,8 @@ import io
 
 # ========== CONFIG ==========
 VEC_DIM = 768  # CLIP ViT-L/14
-INDEX_PATH = "app/encrypted_index.pkl"
-DATA_DIR = "app/data"
+DATA_DIR = "user_data/testuser/data"
+INDEX_PATH = "user_data/testuser/indexes/index.pkl"
 
 # ========== UTILS ==========
 def normalize(vec):

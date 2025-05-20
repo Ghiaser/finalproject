@@ -12,10 +12,9 @@ import faiss
 from cryptography.fernet import Fernet
 import pickle
 
-
 def generate_fernet_key(password: str) -> bytes:
     hashed = hashlib.sha256(password.encode()).digest()
-    return base64.urlsafe_b64encode(hashed)
+    return base64.urlsafe_b64encode(hashed[:32])  # Ensure 32 bytes for Fernet
 
 def create_ckks_context():
     context = ts.context(
@@ -36,9 +35,8 @@ def encrypt_vector_homomorphic(vec: np.ndarray, context: ts.Context) -> ts.CKKSV
 def decrypt_vector_homomorphic(enc_vec: ts.CKKSVector) -> np.ndarray:
     return np.array(enc_vec.decrypt()).reshape(1, -1)
 
-def encrypt_file(file_path: str, password: str):
-    key = generate_fernet_key(password)
-    fernet = Fernet(key)
+def encrypt_file(file_path: str, fernet_key: bytes):
+    fernet = Fernet(fernet_key)
     with open(file_path, 'rb') as f:
         data = f.read()
     encrypted = fernet.encrypt(data)
@@ -46,9 +44,8 @@ def encrypt_file(file_path: str, password: str):
         f.write(encrypted)
     os.remove(file_path)
 
-def decrypt_file(enc_file_path: str, password: str) -> bytes:
-    key = generate_fernet_key(password)
-    fernet = Fernet(key)
+def decrypt_file(enc_file_path: str, fernet_key: bytes) -> bytes:
+    fernet = Fernet(fernet_key)
     with open(enc_file_path, 'rb') as f:
         encrypted = f.read()
     return fernet.decrypt(encrypted)
@@ -66,9 +63,16 @@ class CLIPSecureEmbedder:
         self.device = device
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
         self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to(self.device)
+        self.context = create_ckks_context()
 
     def embed_text(self, text: str) -> np.ndarray:
-        inputs = self.processor(text=[text], return_tensors="pt", padding=True).to(self.device)
+        inputs = self.processor(
+            text=[text],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,  # ✅ חשוב: לחתוך טקסטים ארוכים
+            max_length=77  # ✅ מגבלה של CLIP
+        ).to(self.device)
         with torch.no_grad():
             outputs = self.model.get_text_features(**inputs)
         return outputs.cpu().numpy().flatten()

@@ -3,6 +3,7 @@ import json
 import hashlib
 import uuid
 import secrets
+import base64
 from typing import Dict, List, Optional, Tuple
 
 class UserManager:
@@ -21,8 +22,11 @@ class UserManager:
             return {}
 
     def _save_users(self):
-        with open(self.users_file, 'w') as f:
+        # שומר לקובץ זמני ואז מחליף – הגנה מפני שיבוש
+        temp_path = self.users_file + ".tmp"
+        with open(temp_path, 'w') as f:
             json.dump(self.users, f, indent=2)
+        os.replace(temp_path, self.users_file)
 
     def _hash_password(self, password: str) -> str:
         return hashlib.sha256(password.encode()).hexdigest()
@@ -92,3 +96,10 @@ class UserManager:
         if not salt_hex:
             return None
         return bytes.fromhex(salt_hex)
+
+    def get_user_fernet_key(self, username: str, password: str) -> bytes:
+        salt = self.get_user_salt(username)
+        if salt is None:
+            raise ValueError("Salt not found for user")
+        derived = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100_000)
+        return base64.urlsafe_b64encode(derived)
