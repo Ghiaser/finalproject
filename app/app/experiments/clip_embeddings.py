@@ -6,6 +6,9 @@ from PIL import Image
 import numpy as np
 import time
 
+from pathlib import Path
+
+
 if len(sys.argv) != 4:
     print("Usage: python clip_embeddings.py <model> <input_dir> <output_file>")
     sys.exit(1)
@@ -25,16 +28,22 @@ embeddings = []
 image_names = []
 
 start_time = time.time()
-for img_name in os.listdir(input_dir):
-    img_path = os.path.join(input_dir, img_name)
-    if img_name.lower().endswith((".jpg", ".png", ".webp")):
-        image = preprocess(Image.open(img_path)).unsqueeze(0).to(device)
-        with torch.no_grad():
-            emb = model.encode_image(image)
-            emb = emb / emb.norm(dim=-1, keepdim=True)
-            embeddings.append(emb.cpu().numpy())
-            image_names.append(img_name)
-        print(f"✔ Processed {img_name}")
+input_dir = Path(input_dir)
+img_paths = [p for p in input_dir.rglob("*") if p.suffix.lower() in {".jpg", ".png", ".webp"}]
+if not img_paths:
+    print(f"[WARN] No images found under {input_dir}")
+    sys.exit(1)
+
+for p in sorted(img_paths):
+    img_name = p.name
+    img_path = str(p)
+    image = preprocess(Image.open(img_path)).unsqueeze(0).to(device)
+    with torch.no_grad():
+        emb = model.encode_image(image)
+        emb = emb / emb.norm(dim=-1, keepdim=True)
+        embeddings.append(emb.cpu().numpy())
+        image_names.append(img_name)
+    print(f"✔ Processed {img_name}")
 
 embeddings = np.vstack(embeddings)
 np.save(output_file, {"embeddings": embeddings, "image_names": image_names})

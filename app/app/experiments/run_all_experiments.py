@@ -40,7 +40,13 @@ if __name__ == "__main__":
                 f"Embedding {fmt.upper()} images with {model_name}"
             )
 
+    run_command([sys.executable, "app/app/experiments/reduce_with_pca.py"], "Reducing embeddings to d=256 with PCA")
+
     # 4) compare
     run_command([sys.executable, "app/app/experiments/compare_embeddings.py"], "Comparing embeddings & generating report")
+
+    # Make results table + summary charts
+    run_command([sys.executable, "app/app/experiments/make_results_table.py"],
+                "Building results tables & summary charts")
 
     print(f"{Colors.OKBLUE}🎯 All experiments completed successfully!{Colors.ENDC}")
