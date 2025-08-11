@@ -1,0 +1,38 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual envs
+.venv/
+venv/
+venv310/
+
+# IDE
+.idea/
+
+# Data & generated
+app/app/experiments/images/
+app/app/experiments/*.npy
+app/app/experiments/*_summary.json
+app/app/encrypted_index.pkl
+app/app/temp_cmp_image.jpg
+app/app/temp_query_image.jpg
+app/encrypted_data/
+app/encrypted_vectors/
+app/user_data/
+user_data/
+
+# Pip cache or local wheels
+pip/
+0.6.1/
+0.95.0/
+1.24.0/
+1.7.4/
+2.0.0/
+25.2/
+4.40.0/
+4.5.0/
+5.2.0/
+9.5.0/
