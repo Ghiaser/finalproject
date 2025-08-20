@@ -83,5 +83,36 @@ uvicorn app.api:app --reload &
 
 # 6. Launch the Streamlit front-end. It will automatically use the same Celery configuration.
 streamlit run multi_user_app.py
+# 7. Architecture Diagram
+flowchart LR
+  subgraph UI["User Interface"]
+    S[Streamlit UI]
+    A[FastAPI (optional)]
+  end
+
+  subgraph APP["Application Logic"]
+    C[Celery Tasks<br/>index_multimodal / search_multimodal]
+    UM[User Manager<br/>auth + salts + folders]
+    ENC[Encryptor<br/>Fernet files + CKKS demo]
+    EMB[CLIP Embedder<br/>Text/Image 512-dim, L2]
+    IDX[FAISS Index<br/>IndexFlatIP (cosine via L2)]
+  end
+
+  subgraph STORAGE["Per-User Storage"]
+    D1["user_data/<user>/data<br/>(encrypted files *.enc)"]
+    D2["user_data/<user>/(indexes | mm_index)<br/>(faiss + maps)"]
+  end
+
+  S --> C
+  A --> C
+  C --> UM
+  C --> ENC
+  C --> EMB
+  EMB --> IDX
+  C --> IDX
+  ENC --> D1
+  IDX --> D2
+  D2 --> C
+  D1 --> S
 
 
