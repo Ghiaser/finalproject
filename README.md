@@ -90,7 +90,7 @@ streamlit run multi_user_app.py
 - **Indexing**: Encrypted vectors stored in FAISS index.  
 - **Querying**: User query encrypted → compared against index → results decrypted.  
 - **Results**: Display images/texts to the user.
-  ![Architecture Diagram](docs/architecture.jpg)
+  (docs/architecture.jpg)
 
 
 
