@@ -91,7 +91,7 @@ streamlit run multi_user_app.py
 - **Querying**: User query encrypted → compared against index → results decrypted.  
 - **Results**: Display images/texts to the user.
  
-![architecture](https://github.com/user-attachments/assets/a8ef7078-1d0a-4cda-8b6e-6c3ccf85f32d)
 
+![architecture](https://github.com/user-attachments/assets/43b38349-101d-45e6-b34c-b94232ae03c1)
 
 
