@@ -37,7 +37,7 @@ This repository implements a **secure, multi-user** system for indexing and sear
   5. **Compare Vectors** (text vs. image cosine similarity demo).
 
 - **`requirements.txt`**   
-  Lists all Python dependencies for the entire project. (See below.)
+  Lists all Python dependencies for the entire project. 
 
 - **`tests/`**   
   Contains PyTest fixtures & tests for:
@@ -46,7 +46,7 @@ This repository implements a **secure, multi-user** system for indexing and sear
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Prerequisites
 
