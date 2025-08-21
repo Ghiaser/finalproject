@@ -84,18 +84,19 @@ uvicorn app.api:app --reload &
 # 6. Launch the Streamlit front-end. It will automatically use the same Celery configuration.
 streamlit run multi_user_app.py
 # 7.Run  experiments
-# 1) Create and activate a virtual environment
+
+1) Create and activate a virtual environment
 python -m venv .venv
 .\.venv\Scripts\Activate
 
-# 2) Install dependencies
+ 2) Install dependencies
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 
-# 3) Run all experiments
+ 3) Run all experiments
 python app/app/experiments/run_all_experiments.py
 
-# 4) Open the results folder
+ 4) Open the results folder
 explorer app\app\experiments\summary
 
 # 8. Architecture Diagram
