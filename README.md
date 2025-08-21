@@ -70,12 +70,7 @@ source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# 4. (Optional) If you want real asynchronous Celery tasks, disable eager mode in app/celery_app.py 
-#    by commenting out or removing:
-#      celery.conf.task_always_eager = True
-#      celery.conf.task_eager_propagates = True
-#
-#    Then start a Celery worker. Otherwise, you can skip this—tasks will run synchronously.
+# 4. (Optional) If you want real asynchronous Celery tasks, disable eager mode in app/celery_app.py by commenting out or removing: celery.conf.task_always_eager = True celery.conf.task_eager_propagates = True Then start a Celery worker. Otherwise, you can skip this—tasks will run synchronously.
 celery -A app.celery_app.celery worker --loglevel=info &
 
 # 5. (Optional) If you want to expose a FastAPI backend, launch Uvicorn:
@@ -85,18 +80,18 @@ uvicorn app.api:app --reload &
 streamlit run multi_user_app.py
 # 7.Run  experiments
 
-1) Create and activate a virtual environment
+1) Create and activate a virtual environment:
 python -m venv .venv
 .\.venv\Scripts\Activate
 
- 2) Install dependencies
+ 3) Install dependencies:
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 
- 3) Run all experiments
+ 4) Run all experiments:
 python app/app/experiments/run_all_experiments.py
 
- 4) Open the results folder
+ 5) Open the results folder:
 explorer app\app\experiments\summary
 
 # 8. Architecture Diagram
