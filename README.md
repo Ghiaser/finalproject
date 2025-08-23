@@ -89,7 +89,7 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 
  4) Run all experiments:
-python app/app/experiments/run_all_experiments.py
+python3 app/app/experiments/run_all_experiments.py
 
  5) Open the results folder:
 explorer app\app\experiments\summary
